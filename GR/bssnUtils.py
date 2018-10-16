@@ -773,7 +773,6 @@ def cudaComputeRHSSourceUnStaged(fname,outs,varnames,headers=[],sharedMemSz=48*1
 
 
             elif type(exp)==sympy.Matrix:
-                #print(exp.free_symbols)
                 regm=re.findall(re.compile(r"([A-Z,a-z,0-9,_]*\[pp\])"),dendro.change_deriv_names(str(exp)))
                 for varDep in regm:
                     if varDep[0:-4] in varEnumToInputSymbol.keys():
@@ -809,7 +808,7 @@ def cudaComputeRHSSourceUnStaged(fname,outs,varnames,headers=[],sharedMemSz=48*1
                     bssnOutputVars.append(lvar[0:-4])
                 else:
                     bssnStagedVars.append(lvar[0:-4])
-                    varEnumToStagedSymbol.append(lvar[0:-4])
+                    varEnumToStagedSymbol.append(lvar[0:-4]) #check this for the shared stage var problem
 
             bssnInputVars=list(set(bssnInputVars))
             bssnOutputVars=list(set(bssnOutputVars))
@@ -822,8 +821,8 @@ def cudaComputeRHSSourceUnStaged(fname,outs,varnames,headers=[],sharedMemSz=48*1
             print("dependenacy computation completed\n")
 
             allocated_threads=max_alloc_threads
-            if(total_shared_mem_vars>(48*1024/(8*max_alloc_threads))):
-                x=48 * 1024 /(8*total_shared_mem_vars)
+            if(total_shared_mem_vars>(sharedMemSz/(8*max_alloc_threads))):
+                x=sharedMemSz /(8*total_shared_mem_vars)
                 allocated_threads= (int)(math.pow(2,math.floor(math.log(x,2))))
             print("allocated_threads = "+str(allocated_threads)+"\n\n")
 
@@ -833,9 +832,6 @@ def cudaComputeRHSSourceUnStaged(fname,outs,varnames,headers=[],sharedMemSz=48*1
             ofile.write("__global__ void __compute_"+varOut+"(double** "+unzipout+", const double**"+unzipIn+", "+DerivStruct+"* __derivWorkspace, const "+ Block_CU+ "* __dendroBlkList, const "+BSSNComputePars+"* __bssnPar, const cudaDeviceProp*__deviceProperties){\n")
             
             ofile.write("\tconst _Block dblock="+dendro_blkList+"["+blockId_x+"];\n")
-            
-            #ofile.write("\tconst unsigned int NUM_SM_UNITS="+cuda_device+"->multiProcessorCount;\n")
-            #ofile.write("\tconst unsigned int SM_ID="+blockId_x+"%NUM_SM_UNITS;\n")
             
             ofile.write("\tconst unsigned int offset=dblock.getOffset();\n")
             ofile.write("\tconst unsigned int *sz=dblock.getSz();\n")
@@ -890,55 +886,48 @@ def cudaComputeRHSSourceUnStaged(fname,outs,varnames,headers=[],sharedMemSz=48*1
             ofile.write("\t // deriv vars shared alloc end\n") 
             
 
-            ofile.write("\n\n\tint t = threadIdx.x;")
+            ofile.write("\n\n\tint thread_id = blockIdx.x*"+str(allocated_threads)+" + threadIdx.x;\n")
+            ofile.write("\tint i = thread_id%(sz[0]-6) + 3;\n")
+            ofile.write("\tint j = ((thread_id/(sz[0]-6))%(sz[1]-6)) + 3;\n")
+            ofile.write("\tint k = (thread_id/(sz[2]-6)/(sz[1]-6)) + 3;\n")
+            ofile.write("\tif (k>=host_sz_z-3) return;\n")
+            ofile.write("\t int pp = i + (sz[0])*(j + (sz[1])*k);\n")
+            ofile.write("\n\tint t = threadIdx.x;\n\n")
+
             ofile.write("\t //input vars begin\n")
             for var in bssnInputVars:
-                ofile.write("\t__shared__ double "+var+"_shared[t] = " + var+idx+";\n")
+                ofile.write("\t "+var+"_shared[t] = " + var+idx+";\n")
             ofile.write("\t //input vars end\n")
 
             ofile.write("\t // staged vars begin\n")
             for var in bssnStagedVars:
-                ofile.write("\t__shared__ double "+var+"_shared[t] = " + var +idx+";\n")
+                ofile.write("\t "+var+"_shared[t] = " + var +idx+";\n")
 
             ofile.write("\t // staged vars end\n")
 
             ofile.write("\t // deriv vars begin\n")
             for var in derivVars:
-                ofile.write("\t__shared__ double "+var+"_shared[t] = " + var +idx+";\n")
+                ofile.write("\t "+var+"_shared[t] = " + var +idx+";\n")
             ofile.write("\t // deriv vars end\n")
             ofile.write("\t // deriv vars end\n")
 
-            # ofile.write("\t // output vars begin\n")
-            # for var in bssnOutputVars:
-            #     ofile.write("\t__shared__ double "+var[0:-4]+ar+"[" + str(rhs_tile_size**3) + "];\n")
-            # ofile.write("\t // output vars end\n")
+
+            ofile.write("\t__syncthreads();\n")
 
             ofile.write("\t\t//load data from global to shared memory ends\n")
       
-            ofile.write("\t\tint thread_id = blockIdx.x*"+str(allocated_threads)+" + threadIdx.x;\n")
-
-            ofile.write("\t\tint i = thread_id%(sz[0]-6) + 3;\n")
-            ofile.write("\t\tint j = ((thread_id/(sz[0]-6))%(sz[1]-6)) + 3;\n")
-            ofile.write("\t\tint k = (thread_id/(sz[2]-6)/(sz[1]-6)) + 3;\n")
-
-            ofile.write("\t\tif (k>=host_sz_z-3) return;\n")
-            
-            ofile.write("\n\n")
-
-            ofile.write("\t\t double x,y,z,r_coord,eta;\n")
+            ofile.write("\n\n\t\t double x,y,z,r_coord,eta;\n")
 
             ofile.write("\t\tz = ptmin[2] + dz*k;\n")
             ofile.write("\t\ty = ptmin[1] + dy*j;\n")
-            ofile.write("\t\tx = ptmin[0] + dx*i;\n")
+            ofile.write("\t\tx = ptmin[0] + dx*i;\n\n")
 
-
-            ofile.write("\t\t\n\n")
-            ofile.write("\t\tr_coord = sqrt(x*x + y*y + z*z);\n")
-            ofile.write("\t\teta=ETA_CONST;\n")
-            ofile.write("\t\tif (r_coord >= ETA_R0) {\n")
-            ofile.write("\t\t   eta *= pow( (ETA_R0/r_coord), ETA_DAMPING_EXP);\n")
-            ofile.write("\t\t}\n\n")
-
+            ofile.write("\t\n\n")
+            ofile.write("\tr_coord = sqrt(x*x + y*y + z*z);\n")
+            ofile.write("\teta=ETA_CONST;\n")
+            ofile.write("\tif (r_coord >= ETA_R0) {\n")
+            ofile.write("\t   eta *= pow( (ETA_R0/r_coord), ETA_DAMPING_EXP);\n")
+            ofile.write("\t}\n\n")
 
             ofile.write("\t\t      // Dendro: {{{ \n")
             ofile.write("\t\t      // Dendro: original ops: "+str(sympy.count_ops(lexp))+"\n")
@@ -955,82 +944,24 @@ def cudaComputeRHSSourceUnStaged(fname,outs,varnames,headers=[],sharedMemSz=48*1
                 ofile.write("\t\t      "+change_to_shared_names(dendro.change_deriv_names(sympy.ccode(e, assign_to=lname[i], user_functions=custom_functions)))+"\n")
                 rops = rops + sympy.count_ops(e)
 
-
             ofile.write("\t\t      // Dendro: reduced ops: "+str(rops)+"\n")
             ofile.write("\t\t      // Dendro: }}} \n")
-
 
             ofile.write("\t\t    }\n")
             ofile.write("\t\t  }\n")
             ofile.write("\t\t}\n")
 
-
             ofile.write("\t// sotre computed variables\n\n")
-               # ofile.write("\t\t"+storeVar+"("+var+", &"+unzipout+"["+varEnumToOutputSymbol[var]+"][offset],(const unsigned int *) "+tile_limits+",(const unsigned int *) "+dendro_block_sz+",(const unsigned int *) "+tile_sz+");\n")
 
             ofile.write("\t}\n\n")
             ofile.write("}\n")
 
-        '''ofile.write("/**computes bssn equations using gpu. This is a generated code by Dendro-GR symbolic framework */\n")
-        ofile.write("void rhs_bssn(double** "+unzipout+", const double**"+unzipIn+", "+DerivStruct+"* __derivWorkspace, const "+ Block_CU+ "* __dendroBlkList, unsigned int numBlocks, const "+BSSNComputePars+"* __bssnPar, const cudaDeviceProp*__deviceProperties){\n")
-        ofile.write("\n")
-
-        ofile.write("\tconst _Block dblock="+dendro_blkList+"["+blockId_x+"];\n")
-        ofile.write("\tconst unsigned int NUM_SM_UNITS="+cuda_device+"->multiProcessorCount;\n")
-        ofile.write("\tconst unsigned int SM_ID="+blockId_x+"%NUM_SM_UNITS;\n")
-        ofile.write("\tconst unsigned int offset=dblock.getOffset();\n")
-        ofile.write("\tconst unsigned int *sz=dblock.getSz();\n")
-        ofile.write("\tconst double* hx=dblock.getDx();\n")
-
-        ofile.write("\tconst double dx=hx[0];\n")
-        ofile.write("\tconst double dy=hx[1];\n")
-        ofile.write("\tconst double dz=hx[2];\n")
-
-        ofile.write("\tconst double* ptmin=dblock.getPtMin();\n")
-        ofile.write("\tconst double* ptmax=dblock.getPtMax();\n")
-        ofile.write("\tconst unsigned int bflag=dblock.getBFlag();\n")
-        ofile.write("\n")
-        ofile.write("\tconst unsigned int blkSz=sz[0]*sz[1]*sz[2];\n")
-        ofile.write("\n")
-
-        ofile.write("//compute all the derivs for the all bssn variables begin============================================================================================================\n")
-        for deriv_pass in range(0,len(cuda_deriv_kernel_names)):
-            ofile.write("\t// performing deriv pass "+str(deriv_pass)+"\n")
-            ofile.write("\tcuda::"+cuda_deriv_kernel_names[deriv_pass]+"<<<dim3(numBlocks,1),dim3(10,10,10)>>>("+unzipIn+", "+derivWorkSpace+", "+dendro_blkList+", "+cuda_device+");\n")
-            ofile.write("\tCUDA_CHECK_ERROR();\n")
-            ofile.write("\tcudaDeviceSynchronize();\n")
-            ofile.write("\tCUDA_CHECK_ERROR();\n")
-
-
-        ofile.write("\t//sync threads after deriv computation \n")
-        #ofile.write("\t__syncthreads();\n")
-
-        ofile.write("\t//compute all the derivs for the all bssn variables end ============================================================================================================\n")
-
-        ofile.write("\n\n\n")
-        ofile.write("\t//call for rhs compute begin============================================================================================================\n")
-
-        for var_id in range(0,len(varnames)):
-            ofile.write("\tcuda::__compute_"+varnames[var_id]+"<<<dim3(numBlocks,1),dim3(10,10,10)>>>("+unzipout+","+unzipIn+", "+derivWorkSpace+", "+dendro_blkList+", "+bssnParams+", "+cuda_device+");\n")
-            ofile.write("\tCUDA_CHECK_ERROR();\n")
-            ofile.write("\tcudaDeviceSynchronize();\n")
-            ofile.write("\tCUDA_CHECK_ERROR();\n")
-
-
-        #ofile.write("cudaDeviceSynchronize();\n")
-        #ofile.write("CUDA_CHECK_ERROR();\n")
-
-        ofile.write("//call for rhs compute end==============================================================================================================\n")
-        ofile.write("\n\n")
-        ofile.write("}// end of main kernel\n\n")'''
         ofile.write("} // end of namespace cuda \n\n\n\n")
 
 
 
-def cudaComputeRHSSourceUnStaged_ThreadNo_preserved(fname,outs,varnames,headers=[],sharedMemSz=48*1024, max_alloc_threads=256):
+def cudaComputeRHSSourceUnStaged_thread_No_preserved(fname,outs,varnames,sharedMemSz=48*1024, max_alloc_threads=256,headers=[]):
     
-    allocatable_no_of_sharedVars=48*1024/(8*max_alloc_threads)
-
     # cuda device properties
     cuda_device="__deviceProperties"
     # dendro block list parameters
@@ -1041,6 +972,8 @@ def cudaComputeRHSSourceUnStaged_ThreadNo_preserved(fname,outs,varnames,headers=
     sharedMemUtil="cuda::__GPU_BLOCK_SHARED_MEM_UTIL"
     derivWorkSpace="__derivWorkspace"
     max_dendro_blk_sz=derivWorkSpace+"->__maxBlkSz"
+    #total alllocatable no of shared variables in a single iteration with a 100% shared memory utilization
+    allocatable_no_of_sharedVars=sharedMemSz/(8*max_alloc_threads)
 
     # sharedMemUtilFactor=0.8
 
@@ -1104,9 +1037,13 @@ def cudaComputeRHSSourceUnStaged_ThreadNo_preserved(fname,outs,varnames,headers=
             # staged bssn variables.
             bssnStagedVars=[]
 
-            current_no_of_sharedVars=0
+            #already defined shared vars in the previous iteration of shared memory allocation
             shared_vars_already_defined= set()
+
+            #shared vars to be defined in the new allocation iteration
             shared_vars_to_be_defined=set()
+
+            #expression array to be generated at the current iteration
             exp_arr=[]
 
 
@@ -1182,10 +1119,6 @@ def cudaComputeRHSSourceUnStaged_ThreadNo_preserved(fname,outs,varnames,headers=
             ofile.write("__global__ void __compute_"+varOut+"(double** "+unzipout+", const double**"+unzipIn+", "+DerivStruct+"* __derivWorkspace, const "+ Block_CU+ "* __dendroBlkList, const "+BSSNComputePars+"* __bssnPar, const cudaDeviceProp*__deviceProperties){\n")
             
             ofile.write("\tconst _Block dblock="+dendro_blkList+"["+blockId_x+"];\n")
-            
-            #ofile.write("\tconst unsigned int NUM_SM_UNITS="+cuda_device+"->multiProcessorCount;\n")
-            #ofile.write("\tconst unsigned int SM_ID="+blockId_x+"%NUM_SM_UNITS;\n")
-            
             ofile.write("\tconst unsigned int offset=dblock.getOffset();\n")
             ofile.write("\tconst unsigned int *sz=dblock.getSz();\n")
             ofile.write("\tconst double* hx=dblock.getDx();\n")
@@ -1218,60 +1151,59 @@ def cudaComputeRHSSourceUnStaged_ThreadNo_preserved(fname,outs,varnames,headers=
 
 
             # allocate memory for shared deriv variables.
-            ofile.write("\t//allocate memory for shared deriv variables. \n")
+            # ofile.write("\t//allocate memory for shared deriv variables. \n")
 
             
-            ofile.write("\n\n")
-            ofile.write("\t //input vars  shared alloc begin\n")
-            for var in bssnInputVars:
-                ofile.write("\t__shared__ double "+var+"_shared[" + str(allocated_threads) +"];\n")
-            ofile.write("\t //input vars shared alloc end\n")
+            # ofile.write("\n\n")
+            # ofile.write("\t //input vars  shared alloc begin\n")
+            # for var in bssnInputVars:
+            #     ofile.write("\t__shared__ double "+var+"_shared[" + str(allocated_threads) +"];\n")
+            # ofile.write("\t //input vars shared alloc end\n")
 
-            ofile.write("\t // staged vars shared alloc begin\n")
-            for var in bssnStagedVars:
-                ofile.write("\t__shared__ double "+var+"_shared[" + str(allocated_threads) +"];\n")
+            # ofile.write("\t // staged vars shared alloc begin\n")
+            # for var in bssnStagedVars:
+            #     ofile.write("\t__shared__ double "+var+"_shared[" + str(allocated_threads) +"];\n")
 
-            ofile.write("\t // staged vars shared alloc end\n")
+            # ofile.write("\t // staged vars shared alloc end\n")
 
-            ofile.write("\t // deriv vars shared alloc begin\n")
-            for var in derivVars:
-                ofile.write("\t__shared__ double "+var+"_shared[" + str(allocated_threads) +"];\n")
-            ofile.write("\t // deriv vars shared alloc end\n") 
-            
+            # ofile.write("\t // deriv vars shared alloc begin\n")
+            # for var in derivVars:
+            #     ofile.write("\t__shared__ double "+var+"_shared[" + str(allocated_threads) +"];\n")
+            # ofile.write("\t // deriv vars shared alloc end\n") 
 
-            ofile.write("\n\n\tint t = threadIdx.x;")
-            ofile.write("\t //input vars begin\n")
-            for var in bssnInputVars:
-                ofile.write("\t__shared__ double "+var+"_shared[t] = " + var+idx+";\n")
-            ofile.write("\t //input vars end\n")
+            # ofile.write("\n\n\tint t = threadIdx.x;")
+            # ofile.write("\t //input vars begin\n")
+            # for var in bssnInputVars:
+            #     ofile.write("\t__shared__ double "+var+"_shared[t] = " + var+idx+";\n")
+            # ofile.write("\t //input vars end\n")
 
-            ofile.write("\t // staged vars begin\n")
-            for var in bssnStagedVars:
-                ofile.write("\t__shared__ double "+var+"_shared[t] = " + var +idx+";\n")
+            # ofile.write("\t // staged vars begin\n")
+            # for var in bssnStagedVars:
+            #     ofile.write("\t__shared__ double "+var+"_shared[t] = " + var +idx+";\n")
 
-            ofile.write("\t // staged vars end\n")
+            # ofile.write("\t // staged vars end\n")
 
-            ofile.write("\t // deriv vars begin\n")
-            for var in derivVars:
-                ofile.write("\t__shared__ double "+var+"_shared[t] = " + var +idx+";\n")
-            ofile.write("\t // deriv vars end\n")
-            ofile.write("\t // deriv vars end\n")
+            # ofile.write("\t // deriv vars begin\n")
+            # for var in derivVars:
+            #     ofile.write("\t__shared__ double "+var+"_shared[t] = " + var +idx+";\n")
+            # ofile.write("\t // deriv vars end\n")
+            # ofile.write("\t // deriv vars end\n")
 
             # ofile.write("\t // output vars begin\n")
             # for var in bssnOutputVars:
             #     ofile.write("\t__shared__ double "+var[0:-4]+ar+"[" + str(rhs_tile_size**3) + "];\n")
             # ofile.write("\t // output vars end\n")
 
-            ofile.write("\t\t//load data from global to shared memory ends\n")
+            # ofile.write("\t\t//load data from global to shared memory ends\n")
       
-            ofile.write("\t\tint thread_id = blockIdx.x*"+str(allocated_threads)+" + threadIdx.x;\n")
+            ofile.write("\t\tint thread_id = blockIdx.x*"+str(max_alloc_threads)+" + threadIdx.x;\n")
 
             ofile.write("\t\tint i = thread_id%(sz[0]-6) + 3;\n")
             ofile.write("\t\tint j = ((thread_id/(sz[0]-6))%(sz[1]-6)) + 3;\n")
             ofile.write("\t\tint k = (thread_id/(sz[2]-6)/(sz[1]-6)) + 3;\n")
 
             ofile.write("\t\tif (k>=host_sz_z-3) return;\n")
-            
+            ofile.write("\t\t int pp = i + (sz[0])*(j + (sz[1])*k);\n")
             ofile.write("\n\n")
 
             ofile.write("\t\t double x,y,z,r_coord,eta;\n")
@@ -1280,7 +1212,6 @@ def cudaComputeRHSSourceUnStaged_ThreadNo_preserved(fname,outs,varnames,headers=
             ofile.write("\t\ty = ptmin[1] + dy*j;\n")
             ofile.write("\t\tx = ptmin[0] + dx*i;\n")
 
-
             ofile.write("\t\t\n\n")
             ofile.write("\t\tr_coord = sqrt(x*x + y*y + z*z);\n")
             ofile.write("\t\teta=ETA_CONST;\n")
@@ -1288,28 +1219,64 @@ def cudaComputeRHSSourceUnStaged_ThreadNo_preserved(fname,outs,varnames,headers=
             ofile.write("\t\t   eta *= pow( (ETA_R0/r_coord), ETA_DAMPING_EXP);\n")
             ofile.write("\t\t}\n\n")
 
-
             ofile.write("\t\t      // Dendro: {{{ \n")
             ofile.write("\t\t      // Dendro: original ops: "+str(sympy.count_ops(lexp))+"\n")
 
             rops=0
             ofile.write("\t\t      // Dendro: printing temp variables\n")
             for (v1, v2) in _v[0]:
-                if(len(shared_vars_to_be_defined)<allocatable_no_of_sharedVars):
-                    regm=re.findall(re.compile(r"([A-Z,a-z,0-9,_]*\[pp\])"),dendro.change_deriv_names(str(exp)))
-                    for varDep in regm:
-                        if(varDep[0:-4] in (bssnInputVars+derivVars+bssnStagedVars)):
-                            
+                depVars_exp = set()
+                exp_without_shared =dendro.change_deriv_names(sympy.ccode(v2, assign_to=v1, user_functions=custom_functions))
+                expression=("\t\t   double \t\t"+change_to_shared_names(exp_without_shared)+"\n")
+                regm=re.findall(re.compile(r"([A-Z,a-z,0-9,_]*\[pp\])"),dendro.change_deriv_names(str(exp_without_shared)))
+
+                for varDep in regm:
+                    if(varDep[0:-4] in (bssnInputVars+derivVars+bssnStagedVars)):
+                        depVars_exp.add(varDep[0:-4])
+                if(len(shared_vars_to_be_defined | depVars_exp)<allocatable_no_of_sharedVars):
+                    shared_vars_to_be_defined=(shared_vars_to_be_defined | depVars_exp)
+                    exp_arr.append(expression)
+                else:
+                    pointer_vars_allocated=list((shared_vars_to_be_defined-shared_vars_already_defined))
+                    pointer_vars_removed =list((shared_vars_already_defined-shared_vars_to_be_defined))
+
+                    reallocate_pointers(pointer_vars_allocated,pointer_vars_removed,max_alloc_threads,idx,ofile)
+                    generate_exprs(exp_arr,ofile)
+            
+                    shared_vars_already_defined=shared_vars_to_be_defined
+                    shared_vars_to_be_defined=depVars_exp
+                    exp_arr=[]
+                    exp_arr.append(expression)
+                    
 
 
-                ofile.write('\t\t   double ')
-                ofile.write("\t\t"+change_to_shared_names(dendro.change_deriv_names(sympy.ccode(v2, assign_to=v1, user_functions=custom_functions)))+"\n")
-                rops = rops + sympy.count_ops(v2)
 
-            ofile.write("\t\t      // Dendro: printing variables\n\n")
+
+            ofile.write("\n\n\t\t      // Dendro: printing variables\n\n")
             for i, e in enumerate(_v[1]):
-                ofile.write("\t\t      "+change_to_shared_names(dendro.change_deriv_names(sympy.ccode(e, assign_to=lname[i], user_functions=custom_functions)))+"\n")
+                depVars_exp = set()
+                exp_without_shared =dendro.change_deriv_names(sympy.ccode(e, assign_to=lname[i], user_functions=custom_functions))
+                expression = ("\t\t      "+change_to_shared_names(exp_without_shared)+"\n")
                 rops = rops + sympy.count_ops(e)
+                regm=re.findall(re.compile(r"([A-Z,a-z,0-9,_]*\[pp\])"),dendro.change_deriv_names(str(exp_without_shared)))
+
+                for varDep in regm:
+                    if(varDep[0:-4] in (bssnInputVars+derivVars+bssnStagedVars)):
+                        depVars_exp.add(varDep[0:-4])
+                if(len(shared_vars_to_be_defined | depVars_exp)<allocatable_no_of_sharedVars):
+                    shared_vars_to_be_defined=(shared_vars_to_be_defined | depVars_exp)
+                    exp_arr.append(expression)
+                else:
+                    pointer_vars_allocated=list(shared_vars_to_be_defined-shared_vars_already_defined)
+                    pointer_vars_removed =list(shared_vars_already_defined-shared_vars_to_be_defined)
+
+                    reallocate_pointers(pointer_vars_allocated,pointer_vars_removed,max_alloc_threads,idx,ofile)
+                    generate_exprs(exp_arr,ofile)
+
+                    shared_vars_already_defined=shared_vars_to_be_defined
+                    shared_vars_to_be_defined=depVars_exp
+                    exp_arr=[]
+                    exp_arr.append(expression)
 
 
             ofile.write("\t\t      // Dendro: reduced ops: "+str(rops)+"\n")
@@ -1321,81 +1288,46 @@ def cudaComputeRHSSourceUnStaged_ThreadNo_preserved(fname,outs,varnames,headers=
             ofile.write("\t\t}\n")
 
 
-            ofile.write("\t// sotre computed variables\n\n")
-               # ofile.write("\t\t"+storeVar+"("+var+", &"+unzipout+"["+varEnumToOutputSymbol[var]+"][offset],(const unsigned int *) "+tile_limits+",(const unsigned int *) "+dendro_block_sz+",(const unsigned int *) "+tile_sz+");\n")
+            ofile.write("\t// store computed variables\n\n")
 
             ofile.write("\t}\n\n")
             ofile.write("}\n")
 
-        '''ofile.write("/**computes bssn equations using gpu. This is a generated code by Dendro-GR symbolic framework */\n")
-        ofile.write("void rhs_bssn(double** "+unzipout+", const double**"+unzipIn+", "+DerivStruct+"* __derivWorkspace, const "+ Block_CU+ "* __dendroBlkList, unsigned int numBlocks, const "+BSSNComputePars+"* __bssnPar, const cudaDeviceProp*__deviceProperties){\n")
-        ofile.write("\n")
-
-        ofile.write("\tconst _Block dblock="+dendro_blkList+"["+blockId_x+"];\n")
-        ofile.write("\tconst unsigned int NUM_SM_UNITS="+cuda_device+"->multiProcessorCount;\n")
-        ofile.write("\tconst unsigned int SM_ID="+blockId_x+"%NUM_SM_UNITS;\n")
-        ofile.write("\tconst unsigned int offset=dblock.getOffset();\n")
-        ofile.write("\tconst unsigned int *sz=dblock.getSz();\n")
-        ofile.write("\tconst double* hx=dblock.getDx();\n")
-
-        ofile.write("\tconst double dx=hx[0];\n")
-        ofile.write("\tconst double dy=hx[1];\n")
-        ofile.write("\tconst double dz=hx[2];\n")
-
-        ofile.write("\tconst double* ptmin=dblock.getPtMin();\n")
-        ofile.write("\tconst double* ptmax=dblock.getPtMax();\n")
-        ofile.write("\tconst unsigned int bflag=dblock.getBFlag();\n")
-        ofile.write("\n")
-        ofile.write("\tconst unsigned int blkSz=sz[0]*sz[1]*sz[2];\n")
-        ofile.write("\n")
-
-        ofile.write("//compute all the derivs for the all bssn variables begin============================================================================================================\n")
-        for deriv_pass in range(0,len(cuda_deriv_kernel_names)):
-            ofile.write("\t// performing deriv pass "+str(deriv_pass)+"\n")
-            ofile.write("\tcuda::"+cuda_deriv_kernel_names[deriv_pass]+"<<<dim3(numBlocks,1),dim3(10,10,10)>>>("+unzipIn+", "+derivWorkSpace+", "+dendro_blkList+", "+cuda_device+");\n")
-            ofile.write("\tCUDA_CHECK_ERROR();\n")
-            ofile.write("\tcudaDeviceSynchronize();\n")
-            ofile.write("\tCUDA_CHECK_ERROR();\n")
-
-
-        ofile.write("\t//sync threads after deriv computation \n")
-        #ofile.write("\t__syncthreads();\n")
-
-        ofile.write("\t//compute all the derivs for the all bssn variables end ============================================================================================================\n")
-
-        ofile.write("\n\n\n")
-        ofile.write("\t//call for rhs compute begin============================================================================================================\n")
-
-        for var_id in range(0,len(varnames)):
-            ofile.write("\tcuda::__compute_"+varnames[var_id]+"<<<dim3(numBlocks,1),dim3(10,10,10)>>>("+unzipout+","+unzipIn+", "+derivWorkSpace+", "+dendro_blkList+", "+bssnParams+", "+cuda_device+");\n")
-            ofile.write("\tCUDA_CHECK_ERROR();\n")
-            ofile.write("\tcudaDeviceSynchronize();\n")
-            ofile.write("\tCUDA_CHECK_ERROR();\n")
-
-
-        #ofile.write("cudaDeviceSynchronize();\n")
-        #ofile.write("CUDA_CHECK_ERROR();\n")
-
-        ofile.write("//call for rhs compute end==============================================================================================================\n")
-        ofile.write("\n\n")
-        ofile.write("}// end of main kernel\n\n")'''
         ofile.write("} // end of namespace cuda \n\n\n\n")
 
 
+#allocate or reallocate shared memory for single iteration
+def reallocate_pointers(pointer_vars_tobe_allocated,pointer_vars_removed,allocated_threads,idx, ofile):
+    # if(pointer_vars_removed==set()):
+        
 
-def reallocate_pointers(pointers_to_be_allocated,pointers_removed,allocated_threads, ofile ):
-    if(pointers_to_be_removed==set():
-        for i in range(len(pointers_renamed)):
-        ofile.write("\nextern _shared_ int "+pointers_to_be_allocated[i]+"_shared["+allocated_threads+"];\n"
-    for i in range(len(pointers_renamed)):
-        ofile.write("\nextern _shared_ int "+pointers_to_be_allocated[i]+"_shared["+allocated_threads+"] = "+pointers_removed[i]+"_shared;\n"
+    #     ofile.write("\n\n\tint t = threadIdx.x;\n")
 
-def generate_exp(exp_arr):
+    #     for i in range(len(pointer_vars_tobe_allocated)):
+    #         ofile.write("\t"+pointers_to_be_allocated[i]+"_shared[t] = " + pointers_to_be_allocated[i]+idx+";\n")
+
+    if(len(pointer_vars_tobe_allocated)> len(pointer_vars_removed)):
+        for i in range(len(pointer_vars_removed)):
+            ofile.write("\n\t\textern __shared__ int "+pointer_vars_tobe_allocated[i]+"_shared["+str(allocated_threads)+"] = "+pointer_vars_removed[i]+"_shared;\n")
+        
+        for i in range (len(pointer_vars_removed),len(pointer_vars_tobe_allocated)):
+            ofile.write("\n\t\textern __shared__ int "+pointer_vars_tobe_allocated[i]+"_shared["+str(allocated_threads)+"];\n")
+
+        for i in range(len(pointer_vars_tobe_allocated)):
+            ofile.write("\t\t"+pointer_vars_tobe_allocated[i]+"_shared[t] = " + pointer_vars_tobe_allocated[i]+idx+";\n")
+
+    else:
+        for i in range(len(pointer_vars_tobe_allocated)):
+            ofile.write("\n\t\textern __shared__ int "+pointer_vars_tobe_allocated[i]+"_shared["+str(allocated_threads)+"] = "+pointer_vars_removed[i]+"_shared;\n")
+        
+        for i in range(len(pointer_vars_tobe_allocated)):
+            ofile.write("\t\t"+pointer_vars_tobe_allocated[i]+"_shared[t] = " + pointer_vars_tobe_allocated[i]+idx+";\n")
+
+# generaate expressions for single iteration
+def generate_exprs(exp_arr, ofile):
     for exp in exp_arr:
-        ofile.write("\t"+exp+"\n")
+        ofile.write(exp)
     ofile.write("\t__syncthreads();\n")
-
-
 
 #function to convert the variables to vairable that allocated in the shared memory
 def change_to_shared_names(exp):
@@ -1405,8 +1337,9 @@ def change_to_shared_names(exp):
 
         if varDep[0:-4] in varEnumToInputSymbol.keys():
             expression=expression.replace(varDep,(varDep[0:-4]+"_shared[t]"))
-        elif varDep[0:-4] in varEnumToStagedSymbol and var:
-            expression=expression.replace(varDep,(varDep[0:-4]+"_shared[t]"))
+        elif varDep[0:-4] in varEnumToStagedSymbol:
+            expr_arr=expression.split("=")
+            expression=(expr_arr[0]+"="+expr_arr[1].replace(varDep,(varDep[0:-4]+"_shared[t]")))
         elif varDep[0:-4] in varEnumToOutputSymbol.keys():
             pass
             # expression=expression.replace(varDep,(varDep[0:-4]+"_shared[t]"))

@@ -146,11 +146,16 @@ B_rhs = [_Gt_rhs[i] - eta_func * B[i] +
          l4 * dendro.vec_j_ad_j(b, Gt[i]) + 0*kod(i,B[i])
          for i in dendro.e_i]
 
-outs1 = [a_rhs, b_rhs, gt_rhs, chi_rhs, At_rhs, K_rhs, CalGt, Gt_rhs_s1, Gt_rhs_s2, Gt_rhs_s3, Gt_rhs_s4, Gt_rhs_s5, Gt_rhs_s6, Gt_rhs_s7, Gt_rhs, B_rhs]
-vnames1 = ['a_rhs', 'b_rhs', 'gt_rhs', 'chi_rhs', 'At_rhs', 'K_rhs', 'CalGt', 'Gt_rhs_s1_', 'Gt_rhs_s2_', 'Gt_rhs_s3_', 'Gt_rhs_s4_', 'Gt_rhs_s5_', 'Gt_rhs_s6_', 'Gt_rhs_s7_', 'Gt_rhs', 'B_rhs']
+outs = [a_rhs, b_rhs, gt_rhs, chi_rhs, At_rhs, K_rhs, CalGt, Gt_rhs_s1, Gt_rhs_s2, Gt_rhs_s3, Gt_rhs_s4, Gt_rhs_s5, Gt_rhs_s6, Gt_rhs_s7, Gt_rhs, B_rhs]
+vnames = ['a_rhs', 'b_rhs', 'gt_rhs', 'chi_rhs', 'At_rhs', 'K_rhs', 'CalGt', 'Gt_rhs_s1_', 'Gt_rhs_s2_', 'Gt_rhs_s3_', 'Gt_rhs_s4_', 'Gt_rhs_s5_', 'Gt_rhs_s6_', 'Gt_rhs_s7_', 'Gt_rhs', 'B_rhs']
 
-outs = [ CalGt, Gt_rhs_s1, Gt_rhs_s2, Gt_rhs_s3, Gt_rhs_s4, Gt_rhs_s5, Gt_rhs_s6, Gt_rhs_s7, Gt_rhs, B_rhs]
-vnames = ['CalGt', 'Gt_rhs_s1_', 'Gt_rhs_s2_', 'Gt_rhs_s3_', 'Gt_rhs_s4_', 'Gt_rhs_s5_', 'Gt_rhs_s6_', 'Gt_rhs_s7_', 'Gt_rhs', 'B_rhs']
+# outs = [a_rhs, b_rhs, gt_rhs, chi_rhs, K_rhs, CalGt, Gt_rhs_s1, Gt_rhs_s2, Gt_rhs_s3, Gt_rhs_s4, Gt_rhs_s5, Gt_rhs_s6, Gt_rhs_s7, Gt_rhs, B_rhs]
+# vnames = ['a_rhs', 'b_rhs', 'gt_rhs', 'chi_rhs', 'K_rhs', 'CalGt', 'Gt_rhs_s1_', 'Gt_rhs_s2_', 'Gt_rhs_s3_', 'Gt_rhs_s4_', 'Gt_rhs_s5_', 'Gt_rhs_s6_', 'Gt_rhs_s7_', 'Gt_rhs', 'B_rhs']
+
+
+# outs = [ CalGt, Gt_rhs_s1, Gt_rhs_s2, Gt_rhs_s3, Gt_rhs_s4, Gt_rhs_s5, Gt_rhs_s6, Gt_rhs_s7, Gt_rhs, B_rhs]
+# vnames = ['CalGt', 'Gt_rhs_s1_', 'Gt_rhs_s2_', 'Gt_rhs_s3_', 'Gt_rhs_s4_', 'Gt_rhs_s5_', 'Gt_rhs_s6_', 'Gt_rhs_s7_', 'Gt_rhs', 'B_rhs']
 
 #Genrate  code using ComputeRHSSourceUnstaged method in bssnUtils
-utils.cudaComputeRHSSourceUnStaged("rhs_unstaged8.cu",outs,vnames)
+utils.cudaComputeRHSSourceUnStaged("rhs_unstaged_13.cu",outs,vnames)
+# utils.cudaComputeRHSSourceUnStaged_thread_No_preserved("rhs_unstaged12.cu",outs,vnames)
