@@ -157,5 +157,5 @@ vnames = ['a_rhs', 'b_rhs', 'gt_rhs', 'chi_rhs', 'At_rhs', 'K_rhs', 'CalGt', 'Gt
 # vnames = ['CalGt', 'Gt_rhs_s1_', 'Gt_rhs_s2_', 'Gt_rhs_s3_', 'Gt_rhs_s4_', 'Gt_rhs_s5_', 'Gt_rhs_s6_', 'Gt_rhs_s7_', 'Gt_rhs', 'B_rhs']
 
 #Genrate  code using ComputeRHSSourceUnstaged method in bssnUtils
-utils.cudaComputeRHSSourceUnStaged("rhs_unstaged_13.cu",outs,vnames)
-# utils.cudaComputeRHSSourceUnStaged_thread_No_preserved("rhs_unstaged12.cu",outs,vnames)
+# utils.cudaComputeRHSSourceUnStaged("rhs_unstaged.cu",outs,vnames)
+utils.cudaComputeRHSSourceUnStaged_thread_No_preserved("rhs_unstaged_const_threadNo.cu",outs,vnames)
